@@ -1,103 +1,228 @@
+"use client";
+
+import { Download } from "lucide-react";
 import Image from "next/image";
+import { useState } from "react";
+import CVPreview from "@/app/components/CVPreview";
+import CV3DViewer from "@/app/components/CV3DViewer";
+import FormCompetences from "@/app/components/FormCompetences";
+import FormDetailPersonnel from "@/app/components/FormDetailPersonnel";
+import FormExperience from "@/app/components/FormExperience";
+import FormFormation from "@/app/components/FormFormation";
+import FormInterets from "@/app/components/FormInterets";
+import FormLangues from "@/app/components/FormLangues";
+import FormStyle from "@/app/components/FormStyle";
+import { createEmptyCV } from "@/app/lib/types";
+import type { CVData, StyleCV } from "@/app/lib/types";
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [cv, setCv] = useState<CVData>(createEmptyCV);
+  const [exporting, setExporting] = useState(false);
+  const [vue3D, setVue3D] = useState(false);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  /** Met à jour une clé du CV. */
+  const maj = <K extends keyof CVData>(cle: K, valeur: CVData[K]) =>
+    setCv((c) => ({ ...c, [cle]: valeur }));
+
+  const majPersonnel = (patch: Partial<CVData["personnel"]>) =>
+    setCv((c) => ({ ...c, personnel: { ...c.personnel, ...patch } }));
+
+  const reinitialiserPersonnel = () =>
+    setCv((c) => ({ ...c, personnel: createEmptyCV().personnel }));
+
+  const majStyle = (patch: Partial<StyleCV>) =>
+    setCv((c) => ({ ...c, style: { ...c.style, ...patch } }));
+
+  const reinitialiserStyle = () =>
+    setCv((c) => ({ ...c, style: createEmptyCV().style }));
+
+  const genererPdf = async () => {
+    const element = document.getElementById("cv-preview");
+    if (!element) return;
+
+    setExporting(true);
+    // Pendant la capture, on déborde le conteneur pour ne rien couper.
+    const conteneur = document.querySelector<HTMLElement>(".preview-zone");
+    const overflowAvant = conteneur ? conteneur.style.overflowY : "";
+
+    try {
+      if (conteneur) {
+        conteneur.style.overflowY = "visible";
+        conteneur.scrollTop = 0;
+      }
+
+      const [{ jsPDF }, { default: html2canvas }] = await Promise.all([
+        import("jspdf"),
+        import("html2canvas-pro"),
+      ]);
+
+      const canvas = await html2canvas(element, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: "#ffffff",
+        logging: false,
+      });
+
+      const imageData = canvas.toDataURL("image/jpeg", 0.92);
+      const pdf = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4",
+      });
+
+      const largeurPage = pdf.internal.pageSize.getWidth();
+      const hauteurPage = pdf.internal.pageSize.getHeight();
+      const hauteurImage = (canvas.height * largeurPage) / canvas.width;
+
+      // Découpe en pages A4 si le CV dépasse une page.
+      let position = 0;
+      let reste = hauteurImage;
+      pdf.addImage(imageData, "JPEG", 0, position, largeurPage, hauteurImage);
+      reste -= hauteurPage;
+      while (reste > 0) {
+        position -= hauteurPage;
+        pdf.addPage();
+        pdf.addImage(imageData, "JPEG", 0, position, largeurPage, hauteurImage);
+        reste -= hauteurPage;
+      }
+
+      const identite = `${cv.personnel.prenom} ${cv.personnel.nom}`
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-zA-Z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .trim();
+
+      pdf.save(identite ? `${identite}-CV.pdf` : "Mon-CV.pdf");
+    } catch (erreur) {
+      console.error("Erreur lors de la génération du PDF :", erreur);
+      alert("Impossible de générer le PDF. Veuillez réessayer.");
+    } finally {
+      if (conteneur) conteneur.style.overflowY = overflowAvant;
+      setExporting(false);
+    }
+  };
+
+  return (
+    <div>
+      {/* Ordinateur */}
+      <div className="hidden lg:block">
+        <section className="flex h-screen items-center">
+          {/* Panneau formulaire */}
+          <div className="scrollable no-scrollbar h-full w-1/3 bg-base-200 p-10">
+            <div className="mb-6 flex items-center justify-between">
+              <h1 className="text-2xl font-bold italic">
+                CV
+                <span className="text-secondary">Générateur</span>
+              </h1>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={genererPdf}
+                disabled={exporting}
+              >
+                {exporting ? (
+                  <span className="loading loading-spinner loading-xs" />
+                ) : (
+                  <Download className="w-4" />
+                )}
+                {exporting ? "Génération..." : "Générer en PDF"}
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-6">
+              <FormStyle
+                style={cv.style}
+                onChange={majStyle}
+                onReset={reinitialiserStyle}
+              />
+              <FormDetailPersonnel
+                info={cv.personnel}
+                onChange={majPersonnel}
+                onReset={reinitialiserPersonnel}
+              />
+              <FormExperience
+                experiences={cv.experiences}
+                onChange={(liste) => maj("experiences", liste)}
+                onReset={() => maj("experiences", [])}
+              />
+              <FormFormation
+                formations={cv.formations}
+                onChange={(liste) => maj("formations", liste)}
+                onReset={() => maj("formations", [])}
+              />
+              <FormCompetences
+                competences={cv.competences}
+                onChange={(liste) => maj("competences", liste)}
+                onReset={() => maj("competences", [])}
+              />
+              <FormLangues
+                langues={cv.langues}
+                onChange={(liste) => maj("langues", liste)}
+                onReset={() => maj("langues", [])}
+              />
+              <FormInterets
+                interets={cv.interets}
+                onChange={(liste) => maj("interets", liste)}
+                onReset={() => maj("interets", [])}
+              />
+            </div>
+          </div>
+
+          {/* Panneau aperçu */}
+          <div className="preview-zone scrollable-preview flex h-full w-2/3 items-start justify-center bg-base-300 p-8 relative">
+            <div className="absolute top-2 right-2 z-20 flex gap-2 pointer-events-auto">
+              <button
+                type="button"
+                onClick={() => setVue3D(false)}
+                disabled={vue3D}
+                className={`btn btn-xs btn-ghost ${vue3D ? "opacity-50" : "btn-secondary"}`}
+              >
+                🖼️ 2D
+              </button>
+              <button
+                type="button"
+                onClick={() => setVue3D(true)}
+                disabled={vue3D}
+                className={`btn btn-xs btn-ghost ${vue3D ? "btn-secondary" : "opacity-50"}`}
+              >
+                🧊 3D
+              </button>
+            </div>
+            {vue3D ? (
+              <div key="cv-3d"> <CV3DViewer cv={cv} /> </div>
+            ) : (
+              <div key="cv-2d"> <CVPreview cv={cv} /> </div>
+            )}
+          </div>
+        </section>
+      </div>
+
+      {/* Mobile */}
+      <div className="lg:hidden">
+        <div className="hero min-h-screen bg-base-200">
+          <div className="hero-content text-center">
+            <div className="max-w-md">
+              <h1 className="text-5xl font-bold">
+                Désolé, notre application est uniquement disponible sur
+                ordinateur
+              </h1>
+              <Image
+                src="/sad-sorry.gif"
+                alt=""
+                width={300}
+                height={300}
+                unoptimized
+                className="my-6 mx-auto"
+              />
+              <p className="py-6">
+                Pour créer votre CV, veuillez utiliser un ordinateur ou
+                agrandir la fenêtre de votre navigateur.
+              </p>
+            </div>
+          </div>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+      </div>
     </div>
   );
 }
